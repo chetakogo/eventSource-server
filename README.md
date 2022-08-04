@@ -1,2 +1,2 @@
 # eventSource
-https://http-heroku.herokuapp.com/
+https://websocke-heroku.herokuapp.com/
