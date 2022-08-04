@@ -1,17 +1,49 @@
 const http = require('http');
-const Koa = require('koa');
-const cors = require('koa2-cors');
 const uuid = require('uuid');
-
+const Koa = require('koa');
+const cors = require('koa2-cors')
+const Router = require('koa-router');
+const koaBody = require('koa-body');
 const WS = require('ws');
+
 const app = new Koa();
 
-const Clients = require('./clients');
-const clients = new Clients();
+const contacts = [];
 
-const port = process.env.PORT || 7070;
-const server = http.createServer(app.callback());
-const wsServer = new WS.Server({ server });
+class Clients {
+  constructor(id, name, active, status = true) {
+    this.id = id;
+    this.name = name;
+    this.active = active;
+    this.status = status;
+    this.msg = [];
+  }
+}
+
+app.use(koaBody({
+  text: true,
+  urlencoded: true,
+  multipart: true,
+  json: true,
+}));
+
+const id1 = uuid.v4()
+const id2 = uuid.v4()
+
+const firstContact = new Clients(id1, 'Ivan', false);
+const secondContact = new Clients(id2, 'Alexsandra', false);
+
+function createMsg(userId, created, message) {
+  return ({ userId, created, message });
+}
+
+const msg1 = createMsg(id1, new Date(), 'Привет Мир!');
+firstContact.msg.push(msg1);
+const msg2 = createMsg(id2, new Date(), 'Привет Страна!');
+secondContact.msg.push(msg2);
+
+contacts.push(firstContact);
+contacts.push(secondContact);
 
 app.use(
   cors({
@@ -22,37 +54,68 @@ app.use(
   })
 );
 
-wsServer.on('connection', (ws) => {
-  const id = uuid.v4();
-  ws.on('message', (msg) => {
-    const request = JSON.parse(msg);
-    switch (request.event) {
-      case 'connected':
-        if (clients.checkNikName(request.message)) {
-          ws.close(1000, 'Выберите другое имя');
-        } else {
-          ws.name = request.message;
-          clients.items[id] = ws;
-          clients.sendValidOk(ws);
-          clients.sendOldMsg(ws);
-          clients.sendAllClientEvent();
-        }
-        break;
-      case 'message':
-        clients.sendAllNewMsg(request);
-        clients.message.push({ ['nikName']: clients.items[id].name, ['message']: request.message, ['date']: request.date });
-        break
-      default:
-        break;
-    }
-  });
+const router = new Router();
 
-  ws.on('close', () => {
-    if (typeof clients.items[id] !== "undefined") {
-      delete clients.items[id];
-      clients.sendAllClientEvent();
-    }
-  });
+router.get('/contacts', async (ctx, next) => {
+  ctx.response.body = contacts;
+});
+router.post('/contacts', async (ctx, next) => {
+  contacts.push({ ...ctx.request.body, id: uuid.v4() });
+  ctx.response.status = 204
+});
+router.put('/contacts', async (ctx, next) => {
+  const index = contacts.findIndex((item) => item.active === true || item.active === 'true');
+  contacts[index].active = false;
+
+  ctx.response.status = 204
+});
+router.delete('/contacts/:id', async (ctx, next) => {
+  const index = contacts.findIndex(({ id }) => id === ctx.params.id);
+  if (index !== -1) {
+    contacts.splice(index, 1);
+  };
+  ctx.response.status = 204
 });
 
-server.listen(port, () => console.log(`Server has been started on ${port}...`));
+app.use(router.routes()).use(router.allowedMethods());
+
+const port = process.env.PORT || 7070;
+const server = http.createServer(app.callback())
+const wsServer = new WS.Server({ server });
+
+wsServer.on('connection', (ws, req) => {
+
+  const errCallback = (err) => {
+    if (err) {
+      throw new Error(err);
+    }
+  }
+
+  ws.on('message', msg => {
+    const request = JSON.parse(msg);
+
+    if (request.event === 'createMessage') {
+      const index = contacts.findIndex((item) => item.id === request.createMsg.idUser);
+      contacts[index].msg.push(request.createMsg);
+    }
+
+    if (request.event === 'disableUser') {
+      const index = contacts.findIndex((item) => item.id === request.removeId);
+      if (index !== -1) {
+        contacts.splice(index, 1);
+      };
+    }
+
+    const data = JSON.stringify(
+      {
+        event: 'updateChat',
+        message: contacts,
+      }
+    )
+    ws.send(data);
+  });
+
+  ws.send('welcome', errCallback);
+});
+
+server.listen(port, () => console.log('Server started'));
