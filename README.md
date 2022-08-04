@@ -1,2 +1,2 @@
-# HTTP Server
+# eventSource
 https://http-heroku.herokuapp.com/
